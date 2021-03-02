@@ -10,7 +10,7 @@ source code and data for manuscript
 Raw GIS data (rasters: raw data - CIR (band 1 NIR, band 3 R) DEM and derived - NDVI, insolation, slope) can be found on https://drive.google.com/drive/folders/12TNHrsqpTIvBvV4oNfkj-UeUmv68ufLx?usp=sharing
 
 ## IBM
-- Bembix_model_rev.py: actual IBM, used by all Scenarios_iterations_*_s.py
+- Bembix_model_rev.py: actual IBM, used by all Scenarios_iterations_*.py
 - Scenarios_iterations_example.py: loops for all submodels (Random, UNIFORM, FIXED, FLEXIBLE) to make several runs for each submodel. Example is given for 10 iterations for each submodel. This output is added in the map Outputs example/official_run0/
 - Scenarios_iterations_prior_predictive_check_example.py: same as previous, but for the prior predictive check. This output is added in the map Outputs example/priorpred_run0/
 - Freq_number_nests.txt, Freq_periods.txt, Freq_startingday.txt: input to initialize the model and set the boundary conditions.
