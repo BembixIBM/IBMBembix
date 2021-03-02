@@ -1,0 +1,499 @@
+---
+title: "ABC_Bembix_narrowpriors"
+author: ""
+date: "March 2021"
+output: html_document
+---
+
+ 
+```{r, message=FALSE, warning=FALSE}
+library(abc)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+library(gridExtra)
+library(data.table)
+library(psych)
+
+source("H_modelselectionABC.R") #file with custom made ABC analysis (for doing the weighted model selection)
+
+#loading the data: summary stats, params scenarios, field data summary stats
+##summary stats
+getwd()
+
+multimerge = function(path, pattern){
+  filenames=list.files(path=path, pattern=pattern, full.names=T)
+  rbindlist(lapply(filenames, function(x){read.table(x, header=T)}))
+}
+
+sumstats <- multimerge(path="./Data outputs/Official runs", pattern="Summary_stats*")
+nrow(sumstats)
+
+colnames(sumstats) <- c("scenario", "file title", 'RK2', 'RK5', 'RK10', 'RK15', 'RK20', 'RK30', 'RK40',
+                      "T0", "T2", "T4",  "T6", "T8", "T10", "T12", "T14",
+                      "NA_internal_loops", "NA_all_loops","NA_dens_undirected", "NA_dens_directed",
+                      "NA_reciproc","NA_transitivity_und","NA_transitivity_dir")
+sumstats <- sumstats %>% select(-T0, -T2, -T4, -T6, -T8, -T10, -T12, -T14)
+
+#drop the NA's, which stems from some runs that don't have interchange between clusters
+#sumstats <- sumstats %>% drop_na()
+ind_na <- which(is.na(sumstats), arr.ind=TRUE)[,1]
+#get sumstats only for non-NA
+sumstats <- sumstats %>% slice(-ind_na)
+nrow(sumstats)
+
+#Take relative Ripley's K to complete spatial randomness (CRS) (K-CRS)/CRS; CRS=pi*r^2
+sumstats <- sumstats %>% mutate(RK2rel = ( RK2 - pi*2^2 )/( pi*2^2 ),
+                                RK5rel = ( RK5 - pi*5^2 )/( pi*5^2 ),
+                                RK10rel = ( RK10 - pi*10^2 )/( pi*10^2 ),
+                                RK15rel = ( RK15 - pi*15^2 )/( pi*15^2 ),
+                                RK20rel = ( RK20 - pi*20^2 )/( pi*20^2 ),
+                                RK30rel = ( RK30 - pi*30^2 )/( pi*30^2 ),
+                                RK40rel = ( RK40 - pi*40^2 )/( pi*40^2 ))
+
+#parameters
+params <- multimerge(path="./Data outputs/Official runs", pattern="Param*")
+nrow(params)
+
+head(params)
+summary(params)
+
+#values for NA's
+params_na <- params %>% slice(ind_na) #--> small values of sigma_lsf mainly
+
+#get only params for non-NA
+params <- params %>% slice(-ind_na)
+```
+
+
+###Field data
+Master thesis data  
+```{r}
+##field data summary stats
+ss_field <- read.table("./Field data analyses/Summary_stats_field.txt", header=T)
+ss_field$X0 <- NULL
+ss_field$scenario <- NULL
+ss_field[] <- lapply(ss_field[], as.numeric)
+colnames(ss_field) <- c("mean_RK", "sd_RK", 'RK2', 'RK5', 'RK10', 'RK15', 'RK20', 'RK30', 'RK40',
+                           "NA_internal_loops", "NA_all_loops","NA_dens_undirected", "NA_dens_directed",
+                           "NA_reciproc","NA_transitivity_und","NA_transitivity_dir")
+ss_field$mean_RK <- NULL
+ss_field$sd_RK <- NULL
+
+#Take relative Ripley's K to complete spatial randomness (CRS) (K-CRS)/CRS; CRS=pi*r^2
+ss_field <- ss_field %>% mutate(RK2rel = ( RK2 - pi*2^2 )/( pi*2^2 ),
+                                RK5rel = ( RK5 - pi*5^2 )/( pi*5^2 ),
+                                RK10rel = ( RK10 - pi*10^2 )/( pi*10^2 ),
+                                RK15rel = ( RK15 - pi*15^2 )/( pi*15^2 ),
+                                RK20rel = ( RK20 - pi*20^2 )/( pi*20^2 ),
+                                RK30rel = ( RK30 - pi*30^2 )/( pi*30^2 ),
+                                RK40rel = ( RK40 - pi*40^2 )/( pi*40^2 ))
+
+#make a 1D vector of it
+ss_field_v <- as.numeric(ss_field[1,])
+```
+
+
+```{r}
+#keep summary stats with scenario attached to df
+sumstats_wscen <- sumstats
+#make sure the summary stats are numeric values (scenario will be replaced with 1, 2, 3)
+sumstats[] <- lapply(sumstats[], as.numeric) #make sure all are numeric values
+
+sumstats$scenario <- NULL #take scenario out of summary stats, to make calculations easier
+sumstats$`file title` <- NULL
+```
+
+
+####Correlation between summary stats
+Within the Ripley's K, there is high correlation. But less for the high values. We should select distances that are further apart from each other. F.i. RK2, RK10, RK20, RK30, RK40.  
+Within Network metrics, there is some correlation. Especially for the same metric for undirected and directed networks. These will be dropped.  
+For the network metrics and Ripley's K, there is some structure. But this is expected with such high level network metrics. Variation seems to be high enough.  
+
+```{r}
+#make selection
+sumstats_sel <- sumstats %>% select("RK2rel","RK5rel", "RK10rel", "RK20rel", "RK30rel", "RK40rel",
+                                 "NA_internal_loops", "NA_all_loops", "NA_dens_directed",
+                                 "NA_reciproc", "NA_transitivity_dir")
+
+ss_field_sel <- ss_field %>% select("RK2rel","RK5rel", "RK10rel", "RK20rel", "RK30rel", "RK40rel",
+                                 "NA_internal_loops", "NA_all_loops", "NA_dens_directed",
+                                 "NA_reciproc", "NA_transitivity_dir")
+
+#standardise data, according to simulations
+sumstats_sel_sd <- scale(sumstats_sel, center=summarise_all(sumstats_sel, mean), scale=summarise_all(sumstats_sel, sd))
+#also standardise field data, according to simulaitons
+ss_field_sel_sd <- scale(ss_field_sel[1,], center=summarise_all(sumstats_sel, mean), scale=summarise_all(sumstats_sel, sd))
+
+
+#Within Ripley's K
+pairs(sumstats_sel_sd[sample(nrow(sumstats_sel_sd), 1000),c(1:6)])
+#within network metrics
+pairs(sumstats_sel_sd[sample(nrow(sumstats_sel_sd), 1000), c(7:11)])
+
+#make field data vector
+ss_field_sel_v <- as.numeric(ss_field_sel_sd[1,])
+#make a sumstats selected with scenario
+sumstats_sel_scen <- sumstats_sel #not with standardised data
+sumstats_sel_scen <- bind_cols(sumstats_sel_scen, "scenario"=sumstats_wscen$scenario)
+head(sumstats_sel_scen)
+```
+
+###Indexes
+A vector has to be created with the names in of the models corresponding to the different runs.  
+
+```{r}
+#indexes -> which row corresponds with which model
+indexes <- as.vector(unlist(sumstats_wscen[,1]))
+str(indexes)
+```
+
+
+
+####Making Pearson's correlation matrix
+
+```{r}
+#calculate pearson's correlation coefficients for all
+pcor <- cor(sumstats_sel_sd)
+#View(pcor)
+
+n_st <- nrow(pcor)
+
+#take the mean of the pearson's correlation coefficients per variable
+#then, mutate to get mean without the 1 from the diagonal of the matrix (which is x*n/(n-1) + 1/n)
+mean_pcor <- as.data.frame(pcor) %>% mutate_all(abs) %>% summarise_all(mean) %>% mutate_all(function(x) {x*n_st/(n_st-1) - 1/n_st})
+weights <- mean_pcor %>% mutate_all(function(x) {1-x}) #maybe to the power of 2?
+
+weights
+```
+
+
+##Cross validation for model selection
+
+runs quite long, uncomment to run
+
+```{r eval=FALSE, include=FALSE}
+# cv_bembix <- abc::cv4postpr(index=indexes, sumstat=sumstats_sel_sd, nval=50, tols=0.001003272, method='rejection')
+# summary(cv_bembix)
+# plot(cv_bembix, names.arg=c("Fixed", "Flexible", "Random", "Uniform"), probs=TRUE)
+# plot(cv_bembix, names.arg=c("Fixed", "Flexible", "Random", "Uniform"), probs=FALSE)
+```
+
+##Model selection
+'postpr' function from the package abc is used to look which model is mostly selected (when summary stats lay closest to field data sumstats). 
+
+```{r}
+# modsel_bembix <- postpr(target=ss_field_sel_v, index=indexes, sumstat=sumstats_sel_sd,tol=0.001,method="rejection")
+# summary(modsel_bembix)
+
+modsel_1000 <- create.abcSel(target=ss_field_sel_v, indexes=indexes,
+                             results=as.matrix(sumstats_sel_sd),
+                             number.accept = 1000, weights=as.numeric(weights[1,]))
+# modsel_1000 <- create.abcSel(target=ss_field_sel_v, indexes=indexes, results=as.matrix(sumstats_sel), rate=0.01, weights=rep(1, ncol(sumstats_sel)))
+summary(modsel_1000)
+
+modsel_100 <- create.abcSel(target=ss_field_sel_v, index=indexes,
+                            results=as.matrix(sumstats_sel_sd),
+                            number.accept = 100, weights=as.numeric(weights[1,]))
+summary(modsel_100)
+
+#500?
+modsel_500 <- create.abcSel(target=ss_field_sel_v, index=indexes,
+                            results=as.matrix(sumstats_sel_sd),
+                            number.accept = 500, weights=as.numeric(weights[1,]))
+summary(modsel_500)
+
+#10,000
+modsel_ten1000 <- create.abcSel(target=ss_field_sel_v, index=indexes,
+                            results=as.matrix(sumstats_sel_sd),
+                            number.accept = 10000, weights=as.numeric(weights[1,]))
+summary(modsel_ten1000)
+
+#source("D:/fbatslee/OneDrive - UGent/Conferences/BES/ABCWorkshop/Code/R/ModelSelection.R")
+```
+
+##Summary stats of models that were accepted
+
+```{r, message=FALSE, warning=FALSE}
+#index_ss <- as.numeric(rownames(modsel_bembix$ss))
+sumstats_sel$accepted <- modsel_1000$accepted
+index_ss <- as.numeric(which(sumstats_sel$accepted==T))
+stats_ss <- sumstats_sel[index_ss,]
+
+# ggplot(data=gather(stats_ss), aes(x=value)) +
+#   geom_histogram(aes(x=value, y=..count../sum(..count..))) + facet_wrap(~key, scales='free') +
+#   geom_vline(data=gather(ss_field_sel[1,]), aes(xintercept=value), color='green', linetype="dashed", size=3)+
+#   theme(text = element_text(size=12))+
+#   geom_histogram(data=gather(sumstats_sel), aes(x=value, y=..count../sum(..count..)), fill="#FF6666", alpha=0.5) +
+#   theme_bw()
+```
+
+###Plot of the accepted summary stats with field data
+
+Ripley's K: spatial clustering is quite well formed.  
+Network analysis are produced quite well.  
+```{r}
+#get ripley's K and network analysis values for the accepted models
+stats_ss_w_scen <- sumstats_sel_scen[index_ss,]
+RKs <- stats_ss_w_scen %>% select("scenario","RK2rel", "RK5rel", "RK10rel", "RK20rel","RK30rel", "RK40rel")
+NAs <- stats_ss_w_scen %>% select("scenario", "NA_internal_loops", "NA_all_loops",
+                                  "NA_dens_directed","NA_reciproc", "NA_transitivity_dir")
+
+# str(RKs)
+# str(NAs)
+
+#get field summary stats
+field_RK <- ss_field_sel %>%
+  select("RK2rel","RK5rel", "RK10rel", "RK20rel","RK30rel", "RK40rel") %>%
+  filter(row_number()==1)
+field_RK$scenario <- 'field data'
+
+field_NA <- ss_field_sel %>% select("NA_internal_loops", "NA_all_loops",
+                                  "NA_dens_directed","NA_reciproc", "NA_transitivity_dir") %>%
+  filter(row_number()==1)
+
+#priors
+
+priors_RK <- sumstats_sel_scen  %>%
+  select("scenario", "RK2rel","RK5rel", "RK10rel", "RK20rel", "RK30rel", "RK40rel")
+priors_NA <- sumstats_sel_scen %>% select("scenario","NA_internal_loops", "NA_all_loops",
+                                  "NA_dens_directed","NA_reciproc", "NA_transitivity_dir")
+
+#change colnames to easily plot the functions correctly
+colnames(RKs) <- c("scenario",'2', '5', '10', '20', '30', '40')
+colnames(field_RK) <- c('2', '5', '10', '20', '30', '40',"scenario")
+colnames(priors_RK) <- c('scenario','2', '5', '10', '20','30', '40')
+
+
+colnames(NAs) <- c("scenario",'internal loops','all loops','density',
+                   'reciprocity', 'transitivity')
+colnames(field_NA) <- c('internal loops','all loops','density',
+                   'reciprocity', 'transitivity')
+colnames(priors_NA) <- c("scenario",'internal loops','all loops','density',
+                   'reciprocity', 'transitivity')
+
+#give the scenario's a name again (instead of a number)  
+# RKs$scenario <- modsel_100$values
+# NAs$scenario <- modsel_100$values
+
+#Ripley's K graphs
+# RKs_tidy <- RKs %>%
+#   gather(distance, value, '2':'40') %>%
+#   mutate(distance = as.factor(as.numeric(distance))) %>%
+#   group_by(scenario, distance)
+# RKs_summary <- RKs_tidy %>% summarise(mean_RK = mean(value), sd_RK = sd(value))
+# 
+field_RK_tidy <- field_RK %>% gather(distance, value, '2':'40') %>%
+  mutate(distance = as.factor(as.numeric(distance)))
+RKs_tidy <- RKs %>% gather("2","5", "10", "20", "30", "40",
+                           key="distance", value="RK_value") %>%
+  mutate(distance = as.factor(as.numeric(distance)))
+priors_RK_tidy <- priors_RK  %>%
+  gather("2", "5", "10", "20","30", "40", key="distance", value="RK_value") %>%
+  mutate(distance = as.factor(as.numeric(distance)))
+  # filter(scenario=="random")
+random_RK <- priors_RK_tidy %>% filter(scenario=="Random")
+  
+RK_plot <- ggplot(RKs_tidy, aes(distance, RK_value)) +
+  geom_violin(fill="darkgreen", color="darkgreen", alpha=0.8, position=position_nudge(x=0.1), scale="width", width=0.5) +
+  #geom_jitter(color="black", size=0.4, alpha=0.9) +
+  #geom_line(colour="grey", linetype="dashed", size=1.5, alpha=0.5) +
+  #geom_errorbar(aes(ymin=mean_RK-sd_RK, ymax=mean_RK+sd_RK, width=0.1),
+  #              position=position_dodge(width=0.5)) +
+  ggtitle("Ripley's K")+
+  ylab("(K-CSR)/CSR")+
+  ylim(c(-0.5,20))+
+  theme(text = element_text(size=12))+
+  geom_violin(data=priors_RK_tidy, aes(x=distance, y=RK_value),
+              fill="grey", color="grey", position=position_nudge(x=-0.1), alpha=0.8, scale="width", width=0.5)+
+  geom_violin(data=random_RK, aes(x=distance, y=RK_value),
+              fill="gold", alpha=0.8, colour="gold", scale="width", width=0.5)+
+  geom_point(data=field_RK_tidy, aes(x=distance, y=value), fill="royalblue1", shape=21, size=3)+
+  theme_bw()
+  #geom_line(data=field_RK_tidy, aes(x=distance, y=value), colour='gold', size=1.5)
+#RK_plot
+
+
+#network analysis
+NAs_tidy <- NAs %>%
+  gather(NA_stat, value, "internal loops":"transitivity") %>%
+  group_by(scenario)
+
+field_NA_tidy <- field_NA %>% gather(key="type_NA", value="NA_value",
+                                     "internal loops":"transitivity")%>%
+  group_by(type_NA)
+NAs_tidy <- NAs %>% gather("internal loops":"transitivity", key="type_NA", value="NA_value")
+priors_NA_tidy <- priors_NA  %>%
+  gather("internal loops":"transitivity", key="type_NA", value="NA_value")
+random_NA <- priors_NA_tidy %>% filter(scenario=="Random")
+
+NA_plot <- ggplot(NAs_tidy, aes(x=type_NA,y=NA_value))+
+  geom_violin(fill="darkgreen", color="darkgreen", alpha=0.8, position=position_nudge(x=0.1)) +
+  #geom_jitter(color="black", size=0.4, alpha=0.9) +
+  facet_wrap(~type_NA, scales='free', nrow=1)+
+  geom_violin(data=priors_NA_tidy, aes(x=type_NA, y=NA_value),
+              fill="grey", color="grey", position=position_nudge(-0.1), alpha=0.8)+
+  geom_hline(data=field_NA_tidy, aes(yintercept=NA_value), color='royalblue1', linetype="dashed", size=1)+
+   geom_violin(data=random_NA, aes(x=type_NA, y=NA_value),
+              fill="gold", alpha=0.2, colour="gold")+
+  ylab("value")+
+  ggtitle("Network metrics")+
+  theme_bw()+
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank(),
+        text = element_text(size=12), axis.title.x=element_blank())
+#NA_plot
+  
+grid.arrange(RK_plot, NA_plot, ncol=1, nrow=2, layout_matrix=rbind(c(1,1),c(2,2)), heights=c(1,0.75))
+
+```
+
+
+##Plot of priors and posterios of parameters and summary stats
+Priors are in pink, posteriors in black.  
+
+```{r}
+#priors and posteriors of the parameters
+params_sel <- params %>% select(-pf, -scenario) %>% mutate_all(as.numeric)
+params_prior <- params_sel %>% gather()
+params_post <- params_sel[index_ss,] %>% gather()
+
+params_post_scen <- params[index_ss,] %>% select(-pf) %>% mutate_all(as.numeric) %>%  gather(key="key", value="value",-scenario)
+
+#priors and posteriors of the summary stats
+stats_prior <- sumstats_sel %>% select(-accepted) %>% gather()
+stats_post <- sumstats_sel[index_ss,] %>% select(-accepted) %>% gather()
+
+####PARAMETERS
+#plot params all
+params_postprior <- ggplot(data=
+         transform(params_post_scen,
+                   key=factor(key, levels=c("node_ENV", "node_LSF", "node_CA","beh_excl",
+                                            "sigma_lsf", "range_ca", "param_mindens_ca", "param_sigma_ca"
+                                            ))),
+       aes(x=value)) +
+  stat_bin(aes(y=8*..count../sum(..count..)), boundary=0) + facet_wrap(~key, scales='free', nrow=2)+ #/sum(..count..)
+  stat_bin(data=
+             transform(params_prior, key=factor(key, levels=c("node_ENV", "node_LSF", "node_CA","beh_excl",
+                                            "sigma_lsf", "range_ca", "param_mindens_ca", "param_sigma_ca"))),
+           aes(x=value, y=8*..count../sum(..count..)), boundary=0,
+           fill="#FF6666", alpha=0.5) +
+  xlab("parameter value")+
+  ylab("frequency (%)")+
+  scale_y_continuous(labels=scales::percent)+
+  theme_bw()
+params_postprior
+
+
+#####SUMMARY STATISTICS
+#plot summary stats all
+
+ggplot(data=stats_post, aes(x=value)) +
+  geom_histogram(aes(x=value, y=..count../sum(..count..))) + facet_wrap(~key, scales='free') +
+  geom_vline(data=gather(ss_field_sel[1,]), aes(xintercept=value), color='green', linetype="dashed", size=3)+
+  theme(text = element_text(size=12))+
+  geom_histogram(data=stats_prior, aes(x=value, y=..count../sum(..count..)), fill="#FF6666", alpha=0.5)
+
+##
+pairs.panels(params_sel[index_ss,], 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE, # show density plots
+             ellipses = FALSE
+             )
+```
+
+##Visualisation of response functions
+
+```{r}
+#posteriors of the parameters
+posteriors <- params[index_ss,] %>% tibble::rownames_to_column("ID")
+
+
+sigm_function <- function(mindens, sigmaca, densities){
+  probs <- 1/(1+exp(-(mindens + sigmaca*densities)))
+  return(probs)
+}
+
+####conspecific attraction####
+#for parameter sigma_ca
+#make density-vector
+dens <- seq(from=0, to=30, by=0.05)
+length(dens)
+
+quantiles_sigma <- data.frame(value=quantile(posteriors$param_sigma_ca, c(0.2, 0.5, 0.8))) %>% bind_cols(data.frame(quant=c('20%', '50%', '80%')))
+combi_sigma <- crossing(quantiles_sigma, dens)
+#join them together to get all possible combinations of posteriors and density-vector
+combi_full_sigma <- combi_sigma %>% mutate(resp = sigm_function(mindens=median(posteriors$param_mindens_ca),
+                                                         sigmaca =value,
+                                                         densities=dens)) %>%
+  mutate(dens_rel = dens/(pi*median(posteriors$range_ca)^2))
+
+#plot of response function
+resp_ca_sigma <- ggplot(data=combi_full_sigma, aes(x=dens_rel, y=resp)) +
+  geom_line(aes(linetype=quant, col=quant))+
+  scale_linetype_manual(values=c("twodash", "solid", "dashed"))+
+  scale_color_manual(values=c("blue", "black", "blue"))+
+  xlab("density (# nest / m²)") + ylab("probability") + labs(linetype="Quantile", col="Quantile")+
+  xlim(0,2.5)+
+  theme_bw()+ theme(legend.position = c(0.75, 0.3))
+
+#for parameters min_dens_ca
+quantiles_mindens <- data.frame(value=quantile(posteriors$param_mindens_ca, c(0.2, 0.5, 0.8))) %>% bind_cols(data.frame(quant=c('20%', '50%', '80%')))
+combi_mindens <- crossing(quantiles_mindens, dens)
+combi_full_mindens <- combi_mindens %>% mutate(resp = sigm_function(mindens=value,
+                                                         sigmaca =median(posteriors$param_sigma_ca),
+                                                         densities=dens)) %>%
+  mutate(dens_rel = dens/(pi*median(posteriors$range_ca)^2))
+resp_ca_mindens <- ggplot(data=combi_full_mindens, aes(x=dens_rel, y=resp)) +
+  geom_line(aes(linetype=quant, col=quant))+
+  scale_linetype_manual(values=c("twodash", "solid", "dashed"))+
+  scale_color_manual(values=c("blue", "black", "blue"))+
+  xlab("density (# nests / m²)") + ylab("probability") + labs(linetype="Quantile", col="Quantile")+
+  xlim(0,2.5)+
+  theme_bw()+ theme(legend.position = c(0.75, 0.3))
+
+#for parameter range_ca
+quantiles_range_ca <- data.frame(value=quantile(posteriors$range_ca, c(0.2, 0.5, 0.8))) %>% bind_cols(data.frame(quant=c('20%', '50%', '80%')))
+combi_range <- crossing(quantiles_range_ca, dens)
+
+combi_full_range <- combi_range %>% mutate(resp = sigm_function(mindens=median(posteriors$param_mindens_ca),
+                                                         sigmaca =median(posteriors$param_sigma_ca),
+                                                         densities=dens)) %>%
+  mutate(dens_rel = dens/(pi*value^2))
+
+resp_ca_range <- ggplot(data=combi_full_range, aes(x=dens_rel, y=resp)) +
+  geom_line(aes(linetype=quant, col=quant))+
+  scale_linetype_manual(values=c("twodash", "solid", "dashed"))+
+  scale_color_manual(values=c("blue", "black", "blue"))+
+  xlab("density (# nests / m²)") + ylab("probability") + labs(linetype="Quantile", col="Quantile")+
+  xlim(0,2.5)+
+  theme_bw() + theme(legend.position = c(0.75, 0.3))
+
+###Local site fidelity####
+dist <- seq(from=0, to=10, by=0.05)
+length(dist)
+quantiles <- data.frame(value=quantile(posteriors$sigma_lsf, c(0.2, 0.5, 0.8))) %>% bind_cols(data.frame(quant=c('20%', '50%', '80%')))
+#combine them with ID's of the posteriors
+combi_lsf <- crossing(quantiles, dist)
+
+gauss_function <- function(sigmalsf, distances){
+  probs <- (1/(sigmalsf*sqrt(2*pi)))*exp((-distances^2)/(2*sigmalsf^2))
+  return(probs)
+}
+
+combi_full_lsf <- combi_lsf %>% mutate(resp = gauss_function(sigmalsf=value, distances=dist))
+
+resp_lsf <- ggplot(data=combi_full_lsf , aes(x=dist, y=resp)) +
+  geom_line(aes(linetype=quant, col=quant))+#scale_colour_brewer(palette = "Spectral") +
+  #xlim(0,5) +
+  scale_linetype_manual(values=c("twodash", "solid", "dashed"))+
+  scale_color_manual(values=c("blue", "black", "blue"))+
+  xlab("distance (m)") + ylab("probability") + labs(linetype="Quantile", col="Quantile")+
+  theme_bw()+ theme(legend.position = c(0.7, 0.7))
+
+
+
+grid.arrange(resp_lsf, resp_ca_range, resp_ca_mindens, resp_ca_sigma, nrow=1)
+```
+

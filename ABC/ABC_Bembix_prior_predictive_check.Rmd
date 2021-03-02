@@ -1,0 +1,678 @@
+---
+title: "ABC_Bembix_widepriors"
+author: ""
+date: "March 2021"
+output: html_document
+---
+
+ 
+```{r, message=FALSE, warning=FALSE}
+library(abc)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+library(gridExtra)
+library(data.table)
+library(psych)
+
+source("H_modelselectionABC.R") #file with custom made ABC analysis (for doing the weighted model selection)
+
+#loading the data: summary stats, params scenarios, field data summary stats
+##summary stats
+getwd()
+
+multimerge = function(path, pattern){
+  filenames=list.files(path=path, pattern=pattern, full.names=T)
+  rbindlist(lapply(filenames, function(x){read.table(x, header=T)}))
+}
+
+sumstats <- multimerge(path="./Data outputs/Wide priors", pattern="Summary_stats*")
+nrow(sumstats)
+
+colnames(sumstats) <- c("scenario", "file title", 'RK2', 'RK5', 'RK10', 'RK15', 'RK20', 'RK30', 'RK40',
+                      "T0", "T2", "T4",  "T6", "T8", "T10", "T12", "T14",
+                      "NA_internal_loops", "NA_all_loops","NA_dens_undirected", "NA_dens_directed",
+                      "NA_reciproc","NA_transitivity_und","NA_transitivity_dir")
+sumstats <- sumstats %>% select(-T0, -T2, -T4, -T6, -T8, -T10, -T12, -T14)
+
+#drop the NA's, which stems from some runs that don't have interchange between clusters: these are counted as part of the ABC, but would be dropped immediately, because they don't have interchange between clusters.
+#sumstats <- sumstats %>% drop_na()
+ind_na <- which(is.na(sumstats), arr.ind=TRUE)[,1]
+#get sumstats only for non-NA
+sumstats <- sumstats %>% slice(-ind_na)
+nrow(sumstats)
+
+#Take relative Ripley's K to complete spatial randomness (CRS) (K-CRS)/CRS; CRS=pi*r^2
+sumstats <- sumstats %>% mutate(RK2rel = ( RK2 - pi*2^2 )/( pi*2^2 ),
+                                RK5rel = ( RK5 - pi*5^2 )/( pi*5^2 ),
+                                RK10rel = ( RK10 - pi*10^2 )/( pi*10^2 ),
+                                RK15rel = ( RK15 - pi*15^2 )/( pi*15^2 ),
+                                RK20rel = ( RK20 - pi*20^2 )/( pi*20^2 ),
+                                RK30rel = ( RK30 - pi*30^2 )/( pi*30^2 ),
+                                RK40rel = ( RK40 - pi*40^2 )/( pi*40^2 ))
+
+#parameters
+params <- multimerge(path="./Data outputs/Wide priors", pattern="Param*")
+nrow(params)
+
+head(params)
+summary(params)
+
+#values for NA's
+params_na <- params %>% slice(ind_na) #--> small values of sigma_lsf mainly
+
+#get only params for non-NA
+params <- params %>% slice(-ind_na)
+```
+
+
+###Field data
+Master thesis data  
+```{r}
+##field data summary stats
+ss_field <- read.table("./Field data analyses/Summary_stats_field.txt", header=T)
+ss_field$X0 <- NULL
+ss_field$scenario <- NULL
+ss_field[] <- lapply(ss_field[], as.numeric)
+colnames(ss_field) <- c("mean_RK", "sd_RK", 'RK2', 'RK5', 'RK10', 'RK15', 'RK20', 'RK30', 'RK40',
+                           "NA_internal_loops", "NA_all_loops","NA_dens_undirected", "NA_dens_directed",
+                           "NA_reciproc","NA_transitivity_und","NA_transitivity_dir")
+ss_field$mean_RK <- NULL
+ss_field$sd_RK <- NULL
+
+#Take relative Ripley's K to complete spatial randomness (CRS) (K-CRS)/CRS; CRS=pi*r^2
+ss_field <- ss_field %>% mutate(RK2rel = ( RK2 - pi*2^2 )/( pi*2^2 ),
+                                RK5rel = ( RK5 - pi*5^2 )/( pi*5^2 ),
+                                RK10rel = ( RK10 - pi*10^2 )/( pi*10^2 ),
+                                RK15rel = ( RK15 - pi*15^2 )/( pi*15^2 ),
+                                RK20rel = ( RK20 - pi*20^2 )/( pi*20^2 ),
+                                RK30rel = ( RK30 - pi*30^2 )/( pi*30^2 ),
+                                RK40rel = ( RK40 - pi*40^2 )/( pi*40^2 ))
+
+#make a 1D vector of it
+ss_field_v <- as.numeric(ss_field[1,])
+```
+
+
+###Indexes
+A vector has to be created with the names in of the models corresponding to the different runs.  
+
+```{r}
+#keep summary stats with scenario attached to df
+sumstats_wscen <- sumstats
+#make sure the summary stats are numeric values (scenario will be replaced with 1, 2, 3)
+sumstats[] <- lapply(sumstats[], as.numeric) #make sure all are numeric values
+
+sumstats$scenario <- NULL
+sumstats$`file title` <- NULL
+```
+
+
+####Correlation between summary stats
+Within the Ripley's K, there is high correlation. But less for the high values. We should select distances that are further apart from each other. F.i. RK2, RK10, RK20, RK30, RK40.  
+Within Network metrics, there is some correlation. Especially for the same metric for undirected and directed networks. These will be dropped.  
+For the network metrics and Ripley's K, there is some structure. But this is expected with such high level network metrics. Variation seems to be high enough.  
+
+```{r}
+#make selection
+sumstats_sel <- sumstats %>% select("RK2rel","RK5rel", "RK10rel", "RK20rel", "RK30rel", "RK40rel",
+                                 "NA_internal_loops", "NA_all_loops", "NA_dens_directed",
+                                 "NA_reciproc", "NA_transitivity_dir")
+
+ss_field_sel <- ss_field %>% select("RK2rel","RK5rel", "RK10rel", "RK20rel", "RK30rel", "RK40rel",
+                                 "NA_internal_loops", "NA_all_loops", "NA_dens_directed",
+                                 "NA_reciproc", "NA_transitivity_dir")
+
+#standardise data, according to simulations
+sumstats_sel_sd <- scale(sumstats_sel, center=summarise_all(sumstats_sel, mean), scale=summarise_all(sumstats_sel, sd))
+#also standardise field data, according to simulaitons
+ss_field_sel_sd <- scale(ss_field_sel[1,], center=summarise_all(sumstats_sel, mean), scale=summarise_all(sumstats_sel, sd))
+
+#Within Ripley's K
+pairs(sumstats_sel_sd[sample(nrow(sumstats_sel_sd), 1000),c(1:6)])
+#within network metrics
+pairs(sumstats_sel_sd[sample(nrow(sumstats_sel_sd), 1000), c(7:11)])
+
+#make field data vector
+ss_field_sel_v <- as.numeric(ss_field_sel_sd[1,])
+#make a sumstats selected with scenario
+sumstats_sel_scen <- sumstats_sel #not with standardised data
+sumstats_sel_scen <- bind_cols(sumstats_sel_scen, "scenario"=sumstats_wscen$scenario)
+head(sumstats_sel_scen)
+```
+
+```{r}
+#indexes -> which row corresponds with which model
+indexes <- as.vector(unlist(sumstats_wscen[,1]))
+str(indexes)
+```
+
+####Making Pearson's correlation matrix
+
+```{r}
+#calculate pearson's correlation coefficients for all
+pcor <- cor(sumstats_sel_sd)
+#View(pcor)
+
+n_st <- nrow(pcor)
+
+#take the mean of the pearson's correlation coefficients per variable
+#then, mutate to get mean without the 1 from the diagonal of the matrix (which is x*n/(n-1) + 1/n)
+mean_pcor <- as.data.frame(pcor) %>% mutate_all(abs) %>% summarise_all(mean) %>% mutate_all(function(x) {x*n_st/(n_st-1) - 1/n_st})
+weights <- mean_pcor %>% mutate_all(function(x) {1-x}) #maybe to the power of 2?
+
+weights
+```
+
+
+
+##Model selection
+'postpr' function from the package abc is used to look which model is mostly selected (when summary stats lay closest to field data sumstats). 
+
+```{r}
+# modsel_bembix <- postpr(target=ss_field, index=indexes, sumstat=ss_all,tol=0.001,method="rejection")
+# summary(modsel_bembix)
+
+modsel_1000 <- create.abcSel(target=ss_field_sel_v, indexes=indexes,
+                             results=as.matrix(sumstats_sel_sd), number.accept = 1000,
+                             weights=as.numeric(weights[1,]))
+summary(modsel_1000)
+
+modsel_100 <- create.abcSel(target=ss_field_sel_v, index=indexes,
+                            results=as.matrix(sumstats_sel_sd),
+                            number.accept = 100, weights=as.numeric(weights[1,]))
+summary(modsel_100)
+
+#source("D:/fbatslee/OneDrive - UGent/Conferences/BES/ABCWorkshop/Code/R/ModelSelection.R")
+```
+
+##Summary stats of models that were accepted
+
+Here the priors (transparant red) of the summary stats are plotted and the posterios (black). The green line is the field data.
+
+```{r, message=FALSE, warning=FALSE}
+#index_ss <- as.numeric(rownames(modsel_bembix$ss))
+sumstats_sel$accepted <- modsel_100$accepted
+index_ss <- as.numeric(which(sumstats_sel$accepted==T))
+stats_ss <- sumstats_sel[index_ss,]
+
+ggplot(data=gather(stats_ss), aes(x=value)) +
+  geom_histogram(aes(x=value, y=..count../sum(..count..))) + facet_wrap(~key, scales='free') +
+  geom_vline(data=gather(ss_field_sel[1,]), aes(xintercept=value), color='green', linetype="dashed", size=3)+
+  theme(text = element_text(size=12))+
+  geom_histogram(data=gather(sumstats_sel), aes(x=value, y=..count../sum(..count..)), fill="#FF6666", alpha=0.5)
+```
+
+###Plot of the accepted summary stats with field data
+
+Ripley's K: spatial clustering is quite well formed.  
+Network analysis are produced quite well.  
+```{r}
+#get ripley's K and network analysis values for the accepted models
+stats_ss_w_scen <- sumstats_sel_scen[index_ss,]
+RKs <- stats_ss_w_scen %>% select("scenario","RK2rel", "RK5rel", "RK10rel", "RK20rel","RK30rel", "RK40rel")
+NAs <- stats_ss_w_scen %>% select("scenario", "NA_internal_loops", "NA_all_loops",
+                                  "NA_dens_directed","NA_reciproc", "NA_transitivity_dir")
+
+#get field summary stats
+field_RK <- ss_field_sel %>%
+  select("RK2rel","RK5rel", "RK10rel", "RK20rel","RK30rel", "RK40rel") %>%
+  filter(row_number()==1)
+field_RK$scenario <- 'field data'
+
+field_NA <- ss_field_sel %>% select("NA_internal_loops", "NA_all_loops",
+                                  "NA_dens_directed","NA_reciproc", "NA_transitivity_dir") %>%
+  filter(row_number()==1)
+
+#priors
+
+priors_RK <- sumstats_sel_scen  %>%
+   select("scenario", "RK2rel","RK5rel", "RK10rel", "RK20rel", "RK30rel", "RK40rel")
+priors_NA <- sumstats_sel_scen %>% select("scenario","NA_internal_loops", "NA_all_loops",
+                                  "NA_dens_directed","NA_reciproc", "NA_transitivity_dir")
+
+#change colnames to easily plot the functions correctly
+colnames(RKs) <- c("scenario",'2', '5', '10', '20', '30', '40')
+colnames(field_RK) <- c('2', '5', '10', '20', '30', '40',"scenario")
+colnames(priors_RK) <- c('scenario','2', '5', '10', '20','30', '40')
+
+
+colnames(NAs) <- c("scenario",'internal loops','all loops','density',
+                   'reciprocity', 'transitivity')
+colnames(field_NA) <- c('internal loops','all loops','density',
+                   'reciprocity', 'transitivity')
+colnames(priors_NA) <- c("scenario",'internal loops','all loops','density',
+                   'reciprocity', 'transitivity')
+
+#Ripley's K graphs
+# RKs_tidy <- RKs %>%
+#   gather(distance, value, '2':'40') %>%
+#   mutate(distance = as.factor(as.numeric(distance))) %>%
+#   group_by(scenario, distance)
+# RKs_summary <- RKs_tidy %>% summarise(mean_RK = mean(value), sd_RK = sd(value))
+# 
+field_RK_tidy <- field_RK %>% gather(distance, value, '2':'40') %>%
+  mutate(distance = as.factor(as.numeric(distance)))
+RKs_tidy <- RKs %>% gather("2","5", "10", "20", "30", "40",
+                           key="distance", value="RK_value") %>%
+  mutate(distance = as.factor(as.numeric(distance)))
+priors_RK_tidy <- priors_RK  %>%
+  gather("2", "5", "10", "20","30", "40", key="distance", value="RK_value") %>%
+  mutate(distance = as.factor(as.numeric(distance)))
+  # filter(scenario=="random")
+random_RK <- priors_RK_tidy %>% filter(scenario=="Random")
+  
+RK_plot <- ggplot(RKs_tidy, aes(distance, RK_value)) +
+  geom_violin(fill="darkgreen", color="darkgreen", alpha=0.8, position=position_nudge(x=0.1), scale="width", width=0.5) +
+  #geom_line(colour="grey", linetype="dashed", size=1.5, alpha=0.5) +
+  #geom_errorbar(aes(ymin=mean_RK-sd_RK, ymax=mean_RK+sd_RK, width=0.1),
+  #              position=position_dodge(width=0.5)) +
+  ggtitle("Ripley's K")+
+  ylab("K")+
+  ylim(c(-0.5,20))+
+  theme(text = element_text(size=12))+
+  geom_violin(data=priors_RK_tidy, aes(x=distance, y=RK_value),
+              fill="grey", color="grey", position=position_nudge(x=-0.1), alpha=0.8, scale="width", width=0.5)+
+  geom_violin(data=random_RK, aes(x=distance, y=RK_value),
+              fill="gold", alpha=0.8, colour="gold", scale="width", width=0.5)+
+  geom_point(data=field_RK_tidy, aes(x=distance, y=value), fill="royalblue1", shape=21, size=3)+
+  theme_bw()
+  #geom_line(data=field_RK_tidy, aes(x=distance, y=value), colour='gold', size=1.5)
+RK_plot
+
+
+#network analysis
+NAs_tidy <- NAs %>%
+  gather(NA_stat, value, "internal loops":"transitivity") %>%
+  group_by(scenario)
+
+field_NA_tidy <- field_NA %>% gather(key="type_NA", value="NA_value",
+                                     "internal loops":"transitivity")%>%
+  group_by(type_NA)
+NAs_tidy <- NAs %>% gather("internal loops":"transitivity", key="type_NA", value="NA_value")
+priors_NA_tidy <- priors_NA  %>%
+  gather("internal loops":"transitivity", key="type_NA", value="NA_value")
+random_NA <- priors_NA_tidy %>% filter(scenario=="Random")
+
+NA_plot <- ggplot(NAs_tidy, aes(x=type_NA,y=NA_value))+
+  geom_violin(fill="darkgreen", color="darkgreen", alpha=0.8, position=position_nudge(x=0.1)) +
+  facet_wrap(~type_NA, scales='free', nrow=1)+
+  geom_violin(data=priors_NA_tidy, aes(x=type_NA, y=NA_value),
+              fill="grey", color="grey", position=position_nudge(-0.1), alpha=0.8)+
+  geom_hline(data=field_NA_tidy, aes(yintercept=NA_value), color='royalblue1', linetype="dashed", size=1)+
+   geom_violin(data=random_NA, aes(x=type_NA, y=NA_value),
+              fill="gold", alpha=0.2, colour="gold")+
+  ylab("value")+
+  ggtitle("Network metrics")+
+  theme_bw()+
+  theme(axis.text.x=element_blank(), axis.ticks.x=element_blank(),
+        text = element_text(size=12), axis.title.x=element_blank())
+NA_plot
+  
+grid.arrange(RK_plot, NA_plot, ncol=1, nrow=2, layout_matrix=rbind(c(1,1),c(2,2)), heights=c(1,0.75))
+
+```
+
+
+##Plot of priors and posterios of parameters and summary stats
+Priors are in pink, posteriors in black.  
+
+```{r}
+#ALL
+#priors and posteriors of the parameters
+params_sel <- params %>% select(-pf, -scenario) %>% mutate_all(as.numeric)
+params_prior <- params_sel %>% gather()
+params_post <- params_sel[index_ss,] %>% gather()
+
+#priors and posteriors of the summary stats
+stats_prior <- sumstats_sel %>% select(-accepted) %>% gather()
+stats_post <- sumstats_sel[index_ss,] %>% select(-accepted) %>% gather()
+
+#parameters
+#plot params all
+ggplot(data=params_post, aes(x=value)) +
+  geom_histogram(aes(y=..count../sum(..count..))) + facet_wrap(~key, scales='free')+
+  geom_histogram(data=params_prior, aes(x=value, y=..count../sum(..count..)), fill="#FF6666", alpha=0.5)
+
+#summary stats
+#plot summary stats all
+
+ggplot(data=stats_post, aes(x=value)) +
+  geom_histogram(aes(x=value, y=..count../sum(..count..))) + facet_wrap(~key, scales='free') +
+  geom_vline(data=gather(ss_field_sel[1,]), aes(xintercept=value), color='green', linetype="dashed", size=3)+
+  theme(text = element_text(size=12))+
+  geom_histogram(data=stats_prior, aes(x=value, y=..count../sum(..count..)), fill="#FF6666", alpha=0.5)
+```
+
+##Analysis for submodels separately
+To narrow down parameters (this is the prior predictive check), and make sure not to exclude parameter values that might be important for one of the three submodels.
+
+###UNIFORM
+
+```{r}
+#select uniform and random scenarios
+sumstats_sel_uniform <- sumstats_sel_scen %>% filter(scenario=="UNIFORM" | scenario=='Random')
+#get indexes of the data
+indexes_uniform <- as.vector(unlist(sumstats_sel_uniform$scenario))
+str(indexes_uniform)
+sumstats_sel_uniform <- sumstats_sel_uniform  %>% select(-scenario)
+#standardise data, according to simulations
+sumstats_sel_uniform_sd <- scale(sumstats_sel_uniform, center=summarise_all(sumstats_sel_uniform, mean), scale=summarise_all(sumstats_sel_uniform, sd))
+
+#also standardise field data, according to simulations
+ss_field_sel_uniform_sd <- scale(ss_field_sel[1,], center=summarise_all(sumstats_sel_uniform, mean), scale=summarise_all(sumstats_sel_uniform, sd))
+
+#get params for uniform
+params_uniform <- params %>% filter(scenario=="UNIFORM" | scenario=='Random') %>% select(-pf, -scenario) %>% mutate_all(as.numeric)
+#Calculate weights
+pcor_uniform <- cor(sumstats_sel_uniform)
+n_st_uniform <- nrow(pcor_uniform)
+
+#take the mean of the pearson's correlation coefficients per variable
+#then, mutate to get mean without the 1 from the diagonal of the matrix (which is x*n/(n-1) + 1/n)
+mean_pcor_uniform <- as.data.frame(pcor_uniform) %>% mutate_all(abs) %>% summarise_all(mean) %>% mutate_all(function(x) {x*n_st_uniform/(n_st_uniform-1) - 1/n_st_uniform})
+weights_uniform <- mean_pcor_uniform %>% mutate_all(function(x) {1-x}) #maybe to the power of 2?
+
+#ABC analysis 100/50,000 = 0.002
+abc_uniform <- create.abcSel(target=ss_field_sel_v, index=indexes_uniform,
+                            results=as.matrix(sumstats_sel_uniform),
+                            number.accept = 100, weights=as.numeric(weights_uniform[1,]))
+summary(abc_uniform)
+
+sumstats_sel_uniform$accepted <- abc_uniform$accepted
+index_ss_uniform <- as.numeric(which(sumstats_sel_uniform$accepted==T))
+stats_ss_uniform <- sumstats_sel_uniform[index_ss_uniform,]
+
+#priors and posteriors of the parameters
+params_prior_uniform <- params_uniform %>% gather()
+params_post_uniform <- params_uniform[index_ss_uniform,] %>% gather()
+
+#priors and posteriors of the summary stats
+stats_prior_uniform <- sumstats_sel_uniform %>% select(-accepted) %>% gather()
+stats_post_uniform <- sumstats_sel_uniform[index_ss_uniform,] %>% select(-accepted) %>% gather()
+
+####Parameters plot
+ggplot(data=params_post_uniform, aes(x=value)) +
+  geom_histogram(aes(y=..count../sum(..count..))) + facet_wrap(~key, scales='free')+
+  geom_histogram(data=params_prior_uniform, aes(x=value, y=..count../sum(..count..)), fill="#FF6666", alpha=0.5)
+
+####Summary stats plot
+ggplot(data=stats_post_uniform, aes(x=value)) +
+  geom_histogram(aes(x=value, y=..count../sum(..count..))) + facet_wrap(~key, scales='free') +
+  geom_vline(data=gather(ss_field_sel[1,]), aes(xintercept=value), color='green', linetype="dashed", size=3)+
+  theme(text = element_text(size=12))+
+  geom_histogram(data=stats_prior, aes(x=value, y=..count../sum(..count..)), fill="#FF6666", alpha=0.5)
+```
+
+###FIXED
+
+```{r}
+#select fixed and random scenarios
+sumstats_sel_fixed <- sumstats_sel_scen %>% filter(scenario=="FIXED" | scenario=='Random')
+#get indexes of the data
+indexes_fixed <- as.vector(unlist(sumstats_sel_fixed$scenario))
+str(indexes_fixed)
+sumstats_sel_fixed <- sumstats_sel_fixed  %>% select(-scenario)
+#standardise data, according to simulations
+sumstats_sel_fixed_sd <- scale(sumstats_sel_fixed, center=summarise_all(sumstats_sel_fixed, mean), scale=summarise_all(sumstats_sel_fixed, sd))
+
+#also standardise field data, according to simulations
+ss_field_sel_fixed_sd <- scale(ss_field_sel[1,], center=summarise_all(sumstats_sel_fixed, mean), scale=summarise_all(sumstats_sel_fixed, sd))
+
+#get params for fixed
+params_fixed <- params %>% filter(scenario=="FIXED" | scenario=='Random') %>% select(-pf, -scenario) %>% mutate_all(as.numeric)
+#Calculate weights
+pcor_fixed <- cor(sumstats_sel_fixed)
+n_st_fixed <- nrow(pcor_fixed)
+
+#take the mean of the pearson's correlation coefficients per variable
+#then, mutate to get mean without the 1 from the diagonal of the matrix (which is x*n/(n-1) + 1/n)
+mean_pcor_fixed <- as.data.frame(pcor_fixed) %>% mutate_all(abs) %>% summarise_all(mean) %>% mutate_all(function(x) {x*n_st_fixed/(n_st_fixed-1) - 1/n_st_fixed})
+weights_fixed <- mean_pcor_fixed %>% mutate_all(function(x) {1-x}) #maybe to the power of 2?
+
+#ABC analysis 100/50,000 = 0.002
+abc_fixed <- create.abcSel(target=ss_field_sel_v, index=indexes_fixed,
+                            results=as.matrix(sumstats_sel_fixed),
+                            number.accept = 100, weights=as.numeric(weights_fixed[1,]))
+summary(abc_fixed)
+
+sumstats_sel_fixed$accepted <- abc_fixed$accepted
+index_ss_fixed <- as.numeric(which(sumstats_sel_fixed$accepted==T))
+stats_ss_fixed <- sumstats_sel_fixed[index_ss_fixed,]
+
+#priors and posteriors of the parameters
+params_prior_fixed <- params_fixed %>% gather()
+params_post_fixed <- params_fixed[index_ss_fixed,] %>% gather()
+
+#priors and posteriors of the summary stats
+stats_prior_fixed <- sumstats_sel_fixed %>% select(-accepted) %>% gather()
+stats_post_fixed <- sumstats_sel_fixed[index_ss_fixed,] %>% select(-accepted) %>% gather()
+
+####Parameters plot
+ggplot(data=params_post_fixed, aes(x=value)) +
+  geom_histogram(aes(y=..count../sum(..count..))) + facet_wrap(~key, scales='free')+
+  geom_histogram(data=params_prior_fixed, aes(x=value, y=..count../sum(..count..)), fill="#FF6666", alpha=0.5)
+
+####Summary stats plot
+ggplot(data=stats_post_fixed, aes(x=value)) +
+  geom_histogram(aes(x=value, y=..count../sum(..count..))) + facet_wrap(~key, scales='free') +
+  geom_vline(data=gather(ss_field_sel[1,]), aes(xintercept=value), color='green', linetype="dashed", size=3)+
+  theme(text = element_text(size=12))+
+  geom_histogram(data=stats_prior, aes(x=value, y=..count../sum(..count..)), fill="#FF6666", alpha=0.5)
+```
+
+
+###FLEXIBLE
+
+```{r}
+#select flexible and random scenarios
+sumstats_sel_flexible <- sumstats_sel_scen %>% filter(scenario=="FLEXIBLE" | scenario=='Random')
+#get indexes of the data
+indexes_flexible <- as.vector(unlist(sumstats_sel_flexible$scenario))
+str(indexes_flexible)
+sumstats_sel_flexible <- sumstats_sel_flexible  %>% select(-scenario)
+#standardise data, according to simulations
+sumstats_sel_flexible_sd <- scale(sumstats_sel_flexible, center=summarise_all(sumstats_sel_flexible, mean), scale=summarise_all(sumstats_sel_flexible, sd))
+
+#also standardise field data, according to simulations
+ss_field_sel_flexible_sd <- scale(ss_field_sel[1,], center=summarise_all(sumstats_sel_flexible, mean), scale=summarise_all(sumstats_sel_flexible, sd))
+
+#get params for flexible
+params_flexible <- params %>% filter(scenario=="FLEXIBLE" | scenario=='Random') %>% select(-pf, -scenario) %>% mutate_all(as.numeric)
+#Calculate weights
+pcor_flexible <- cor(sumstats_sel_flexible)
+n_st_flexible <- nrow(pcor_flexible)
+
+#take the mean of the pearson's correlation coefficients per variable
+#then, mutate to get mean without the 1 from the diagonal of the matrix (which is x*n/(n-1) + 1/n)
+mean_pcor_flexible <- as.data.frame(pcor_flexible) %>% mutate_all(abs) %>% summarise_all(mean) %>% mutate_all(function(x) {x*n_st_flexible/(n_st_flexible-1) - 1/n_st_flexible})
+weights_flexible <- mean_pcor_flexible %>% mutate_all(function(x) {1-x}) #maybe to the power of 2?
+
+#ABC analysis 100/50,000 = 0.002
+abc_flexible <- create.abcSel(target=ss_field_sel_v, index=indexes_flexible,
+                            results=as.matrix(sumstats_sel_flexible),
+                            number.accept = 100, weights=as.numeric(weights_flexible[1,]))
+summary(abc_flexible)
+
+sumstats_sel_flexible$accepted <- abc_flexible$accepted
+index_ss_flexible <- as.numeric(which(sumstats_sel_flexible$accepted==T))
+stats_ss_flexible <- sumstats_sel_flexible[index_ss_flexible,]
+
+#priors and posteriors of the parameters
+params_prior_flexible <- params_flexible %>% gather()
+params_post_flexible <- params_flexible[index_ss_flexible,] %>% gather()
+
+#priors and posteriors of the summary stats
+stats_prior_flexible <- sumstats_sel_flexible %>% select(-accepted) %>% gather()
+stats_post_flexible <- sumstats_sel_flexible[index_ss_flexible,] %>% select(-accepted) %>% gather()
+
+####Parameters plot
+ggplot(data=params_post_flexible, aes(x=value)) +
+  geom_histogram(aes(y=..count../sum(..count..))) + facet_wrap(~key, scales='free')+
+  geom_histogram(data=params_prior_flexible, aes(x=value, y=..count../sum(..count..)), fill="#FF6666", alpha=0.5)
+
+####Summary stats plot
+ggplot(data=stats_post_flexible, aes(x=value)) +
+  geom_histogram(aes(x=value, y=..count../sum(..count..))) + facet_wrap(~key, scales='free') +
+  geom_vline(data=gather(ss_field_sel[1,]), aes(xintercept=value), color='green', linetype="dashed", size=3)+
+  theme(text = element_text(size=12))+
+  geom_histogram(data=stats_prior, aes(x=value, y=..count../sum(..count..)), fill="#FF6666", alpha=0.5)
+```
+
+
+
+```{r}
+#plot link between nodes and parameters
+
+#node ENV
+ggplot(data=gather(params_sel[index_ss,], "param", "value", 5:8), aes(x=node_ENV, y=value)) +
+  geom_point() + facet_wrap(~param, scales='free', nrow=1) +
+  ggtitle("All models 100/200 000")+
+  geom_hline(data = data.frame(yint=-3,param="param_mindens_ca"), aes(yintercept = yint), linetype = "dotted")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+ggplot(data=gather(params_uniform[index_ss_uniform,], "param", "value", 5:8), aes(x=node_ENV, y=value)) +
+  geom_point() + facet_wrap(~param, scales='free', nrow=1) +
+  ggtitle ("Uniform 100/50 000")+
+  geom_hline(data = data.frame(yint=-3,param="param_mindens_ca"), aes(yintercept = yint), linetype = "dotted")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+ggplot(data=gather(params_fixed[index_ss_fixed,], "param", "value", 5:8), aes(x=node_ENV, y=value)) +
+  geom_point() + facet_wrap(~param, scales='free', nrow=1) +
+  ggtitle ("Fixed 100/50 000")+
+  geom_hline(data = data.frame(yint=-3,param="param_mindens_ca"), aes(yintercept = yint), linetype = "dotted")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+ggplot(data=gather(params_flexible[index_ss_flexible,], "param", "value", 5:8), aes(x=node_ENV, y=value)) +
+  geom_point() + facet_wrap(~param, scales='free', nrow=1) +
+  ggtitle ("Flexible 100/50 000")+
+  geom_hline(data = data.frame(yint=-3,param="param_mindens_ca"), aes(yintercept = yint), linetype = "dotted")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+#node CA
+ggplot(data=gather(params_sel[index_ss,], "param", "value", 5:8), aes(x=node_CA, y=value)) +
+  geom_point() + facet_wrap(~param, scales='free', nrow=1) +
+  ggtitle("All models 100/200 000") +
+  geom_hline(data = data.frame(yint=-3,param="param_mindens_ca"), aes(yintercept = yint), linetype = "dotted")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+ggplot(data=gather(params_uniform[index_ss_uniform,], "param", "value", 5:8), aes(x=node_CA, y=value)) +
+  geom_point() + facet_wrap(~param, scales='free', nrow=1) +
+  ggtitle ("Uniform 100/50 000")+
+  geom_hline(data = data.frame(yint=-3,param="param_mindens_ca"), aes(yintercept = yint), linetype = "dotted")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+ggplot(data=gather(params_fixed[index_ss_fixed,], "param", "value", 5:8), aes(x=node_CA, y=value)) +
+  geom_point() + facet_wrap(~param, scales='free', nrow=1) +
+  ggtitle ("Fixed 100/50 000")+
+  geom_hline(data = data.frame(yint=-3,param="param_mindens_ca"), aes(yintercept = yint), linetype = "dotted")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+ggplot(data=gather(params_flexible[index_ss_flexible,], "param", "value", 5:8), aes(x=node_CA, y=value)) +
+  geom_point() + facet_wrap(~param, scales='free', nrow=1) +
+  ggtitle ("Flexible 100/50 000")+
+  geom_hline(data = data.frame(yint=-3,param="param_mindens_ca"), aes(yintercept = yint), linetype = "dotted")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+#node LSF
+ggplot(data=gather(params_sel[index_ss,], "param", "value", 5:8), aes(x=node_LSF, y=value)) +
+  geom_point() + facet_wrap(~param, scales='free', nrow=1) +
+  ggtitle("All models 100/200 000")+
+  geom_hline(data = data.frame(yint=-3,param="param_mindens_ca"), aes(yintercept = yint), linetype = "dotted")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+ggplot(data=gather(params_uniform[index_ss_uniform,], "param", "value", 5:8), aes(x=node_LSF, y=value)) +
+  geom_point() + facet_wrap(~param, scales='free', nrow=1) +
+  ggtitle ("Uniform 100/50 000")+
+  geom_hline(data = data.frame(yint=-3,param="param_mindens_ca"), aes(yintercept = yint), linetype = "dotted")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+ggplot(data=gather(params_fixed[index_ss_fixed,], "param", "value", 5:8), aes(x=node_LSF, y=value)) +
+  geom_point() + facet_wrap(~param, scales='free', nrow=1) +
+  ggtitle ("Fixed 100/50 000")+
+  geom_hline(data = data.frame(yint=-3,param="param_mindens_ca"), aes(yintercept = yint), linetype = "dotted")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+ggplot(data=gather(params_flexible[index_ss_flexible,], "param", "value", 5:8), aes(x=node_LSF, y=value)) +
+  geom_point() + facet_wrap(~param, scales='free', nrow=1) +
+  ggtitle ("Flexible 100/50 000")+
+  geom_hline(data = data.frame(yint=-3,param="param_mindens_ca"), aes(yintercept = yint), linetype = "dotted")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+
+#covariation for other parameters (not the nodes)
+##sigmaca vs rangeca
+a <- ggplot(data=params_sel[index_ss,], aes(x=param_sigma_ca, y=range_ca)) +
+  geom_point() + #facet_wrap(~param, scales='free') +
+  ggtitle("All models 100/200 000") +
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+b <- ggplot(data=params_uniform[index_ss_uniform,], aes(x=param_sigma_ca, y=range_ca)) +
+  geom_point() + #facet_wrap(~param, scales='free') +
+  ggtitle ("Uniform 100/50 000")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+c <- ggplot(data=params_fixed[index_ss_fixed,], aes(x=param_sigma_ca, y=range_ca)) +
+  geom_point() + #facet_wrap(~param, scales='free') +
+  ggtitle ("Fixed 100/50 000")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+d <- ggplot(data=params_flexible[index_ss_flexible,], aes(x=param_sigma_ca, y=range_ca)) +
+  geom_point() + #facet_wrap(~param, scales='free') +
+  ggtitle ("Flexible 100/50 000")+
+  geom_hline(data = data.frame(yint=7,param="range_ca"), aes(yintercept = yint), linetype = "dotted")
+
+grid.arrange(a,b,c,d, nrow=1)
+
+##mindensca vs sigmaca
+ggplot(data=params_sel[index_ss,], aes(x=param_mindens_ca, y=param_sigma_ca)) +
+  geom_point() + #facet_wrap(~param, scales='free') +
+  ggtitle("All models 100/200 000")+
+  geom_vline(data = data.frame(xint=-3,param="param_mindens_ca"), aes(xintercept = xint), linetype = "dotted")
+
+ggplot(data=params_uniform[index_ss_uniform,], aes(x=param_mindens_ca, y=param_sigma_ca)) +
+  geom_point() + #facet_wrap(~param, scales='free') +
+  ggtitle ("Uniform 100/50 000")+
+  geom_vline(data = data.frame(xint=-3,param="param_mindens_ca"), aes(xintercept = xint), linetype = "dotted")
+
+ggplot(data=params_fixed[index_ss_fixed,], aes(x=param_mindens_ca, y=param_sigma_ca)) +
+  geom_point() + #facet_wrap(~param, scales='free') +
+  ggtitle ("Fixed 100/50 000")+
+  geom_vline(data = data.frame(xint=-3,param="param_mindens_ca"), aes(xintercept = xint), linetype = "dotted")
+
+ggplot(data=params_flexible[index_ss_flexible,], aes(x=param_mindens_ca, y=param_sigma_ca)) +
+  geom_point() + #facet_wrap(~param, scales='free') +
+  ggtitle ("Flexible 100/50 000")+
+  geom_vline(data = data.frame(xint=-3,param="param_mindens_ca"), aes(xintercept = xint), linetype = "dotted")
+```
+
+```{r}
+pairs.panels(params_sel[index_ss,], 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = FALSE
+             )
+pairs.panels(params_uniform[index_ss_uniform,], 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE, # show density plots
+             ellipses = FALSE
+             )
+
+pairs.panels(params_fixed[index_ss_fixed,], 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE, # show density plots
+             ellipses = FALSE
+             )
+
+pairs.panels(params_flexible[index_ss_flexible,], 
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE, # show density plots
+             ellipses = FALSE
+             )
+```
+
