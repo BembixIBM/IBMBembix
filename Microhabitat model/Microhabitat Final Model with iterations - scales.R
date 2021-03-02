@@ -37,7 +37,7 @@ library(imager)
 ################################
 ##### Format data correctly ####
 ###############################
-scales <- c("2") #0.1, 0.2, 0.5, 1 and 2 m 
+scales <- c("1") #0.1, 0.2, 0.5, 1 and 2 m 
 for (scale in scales){
   
   Bembix_raw <- read.csv("./data/MicrohabitatModel_FullData_04062020.csv")
