@@ -122,7 +122,7 @@ pred_reg_raw <- read.table(paste0("./output_iterations/scale_", scale, "/predict
 pred_reg_all <- pred_reg_raw %>% group_by(X,Y) %>% summarise(avg_mu = mean(mu), sd_mu=sd(mu))
 Nests <- read.table("./data/RealNests_withcoordinates.txt", sep=";")
 #load predictions that are within study area
-reg_area <- read.csv("./output_iterations/RegPoints_clipStudyArea.csv")
+reg_area <- read.csv("./data/RegPoints_clipStudyArea.csv")
 pred_reg <- reg_area %>% select(id, X, Y) %>%
   inner_join(pred_reg_all, by=c("X", "Y"))
 
