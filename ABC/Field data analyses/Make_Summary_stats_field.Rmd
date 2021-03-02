@@ -1,0 +1,333 @@
+---
+title: "Summary statistics Field data"
+date: "December 2020"
+output:
+  html_document: default
+geometry: margin=1.5in
+header-includes:
+  \pagenumbering{gobble}
+---
+#Point Pattern Analysis - Visualizing the data
+##Material & methods
+Point pattern data can spatially be visualised and analysed with the R package Spatstat. The data are transformed into a ppp-class (planar point pattern) to easily plot the data and make calculations. The point pattern is plotted in a window frame, defined as a polygon. The polygon for the nests approximate the fenced grid in the field. Associated information of the points can be included in the ppp-object as 'marks'. Relevant mark in the ppp-object of the nests is 'RealNest'. These data are plotted and also density-plots are made.
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#load Spatstat
+library(spatial)
+library(spatstat)
+library(ggplot2)
+library(igraph)
+library(dplyr)
+library(tidyr)
+library(factoextra)
+library(gridExtra)
+
+#read the data as text-file, to a data.frame
+data <- read.table("Raw data/Nests_coordinates.txt", header=T, sep=";")
+realnests <- read.table("Derived data/RealNests.txt", header=T, sep=";")
+
+data <- data %>% left_join(dplyr::select(realnests, -"WespID"), by=c("NestID")) %>%
+  replace_na(list(real_nest=0))
+#summary of the data
+#data
+
+summary_stats_field <- tibble(scenario=c("field data", "distances"))
+```
+
+
+
+```{r}
+#parasitised nests
+parnests <- read.table("Derived data/ParasitizedNests.txt", header=T, sep=";")
+
+data_par <- data %>% left_join(parnests, by=c("NestID")) %>% replace_na(list(Parasiet=0))
+
+par_summary <- data_par %>% filter(real_nest==1) %>%
+  select(Parasiet) %>% group_by(Parasiet) %>% 
+  summarize(n=n())
+
+```
+
+
+```{r, echo=TRUE, fig.height=4, fig.width=6, message=FALSE, warning=FALSE}
+#vectorising the data
+X<-data$x
+Y<-data$y
+RealNest<-data$real_nest
+
+#polygon 
+x_pol = c(23261.537, 23231.81, 23250.135, 23332.346, 23321.325)
+y_pol = c(197904.02, 197878.639, 197845.014, 197876.824, 197899.974)
+polygon = ppp(x_pol, y_pol, c(23231, 23333), c(197844, 197905))
+raster_or <- owin(poly=list(x=x_pol, y=y_pol))
+plot(raster_or, col = "red",
+     main="Polygon of the grid (original red, adjusted black line)")
+
+#To ensure all the points are within the polygon, the original 
+#grid-boundaries
+#are shifted a bit some of the nests lie about half a meter outside 
+#the original grid
+x_shifted = c(23261.537, 23230, 23250.135, 23332.346, 23321.325, 23313,
+              23310)
+y_shifted = c(197904.02, 197878.639, 197845.014, 197876.824, 197899.974,
+              197907, 197901)
+
+#plot the polygon
+raster <- owin(poly=list(x=x_shifted, y=y_shifted))
+plot(raster, add=TRUE)
+```
+
+A planar point pattern (ppp-class) is made, with marks RealNest, Day and Par. A separate ppp-object is made for real nests alone.  
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE}
+#m = factor(RealNest) #if you want to add 'marks' to ppp
+m = data.frame(RealNest=factor(RealNest))
+#making the planar point pattern class
+Nests <- ppp(X, Y, c(23231, 23333), c(197844, 197905), marks=m,
+             window=raster)
+#ppp-object of only the real nests
+Nests_real <- Nests[RealNest==1]
+#summary(Nests_real)
+
+unitname(Nests) <- c("metre", 'metres')
+unitname(Nests_real) <- c("metre", 'metres')
+
+#density
+lambda<-summary(Nests)$intensity
+lambda
+lambda_real <- summary(Nests_real)$intensity
+lambda_real
+```
+
+Density plots give good visualisations of the spatial structuring of the nests.  
+
+```{r, fig.height=8, fig.width=12, message=FALSE, warning=FALSE}
+par(mfrow=c(2,2))
+
+DensityVisualisation_real <- density(Nests_real, sigma = 2)
+plot(DensityVisualisation_real, main = " ", cex=10)
+plot(Nests_real, add = TRUE, use.marks = FALSE, cex = 0.2)
+contour(density(Nests_real,3),add=TRUE, axes=FALSE)
+persp(DensityVisualisation_real, visible=TRUE, shade = 0.3, expand=10,
+      main="", zlab="Density real nests", cex=10)
+
+summary_stats_field$mean_dens <- c(mean(DensityVisualisation_real), NA)
+summary_stats_field$sd_dens <- c(sd(DensityVisualisation_real), NA)
+```
+
+#Point Pattern Analysis - Spatial statistics
+
+```{r, fig.height=4, fig.width=12, echo=TRUE, message=FALSE, warning=FALSE}
+RipleyK30 <- as.data.frame(Kest(Nests_real, r=c(0,2,5,10,15,20,30,40)))
+RipleyK30 <- RipleyK30 %>% mutate(relK = (iso-theo)/theo)
+plot(relK~r, data=RipleyK30)
+
+summary_stats_field$'0' <- c(RipleyK30$iso[1], 0)
+summary_stats_field$'2' <- c(RipleyK30$iso[2], 2)
+summary_stats_field$'5' <- c(RipleyK30$iso[3], 5)
+summary_stats_field$'10' <- c(RipleyK30$iso[4], 10)
+summary_stats_field$'15' <- c(RipleyK30$iso[5], 15)
+summary_stats_field$'20' <- c(RipleyK30$iso[6], 20)
+summary_stats_field$'30' <- c(RipleyK30$iso[7], 30)
+summary_stats_field$'40' <- c(RipleyK30$iso[8], 40)
+```
+
+#Cluster analysis to define number of aggregates
+
+```{r}
+data_real = data[data$real_nest==1,]
+#write.table(data_real, "Derived data/RealNests_withcoordinates.txt", sep=";")
+
+#get optimal number of clusters through elbow plot, plotting, DEM (see Appendix of manuscript) https://uc-r.github.io/kmeans_clustering
+fviz_nbclust(cbind(data_real$x,data_real$y), kmeans, method="wss", k.max=20)
+
+df <- cbind(data_real$x,data_real$y)
+colnames(df) <- c("x", "y")
+
+k5 <- kmeans(df, 5, nstart=20)
+k6 <-  kmeans(df, 6, nstart=20)
+k7 <-  kmeans(df, 7, nstart=20)
+k8 <-  kmeans(df, 8, nstart=20)
+k9 <- kmeans(df, 9, nstart=20)
+k10 <-  kmeans(df, 10, nstart=20)
+k11 <- kmeans(df, 11, nstart=20)
+k12 <- kmeans(df, 12, nstart=20)
+
+p5 <- fviz_cluster(k5, geom = "point", data = df, ellipse=F) + ggtitle("k = 5") + theme_bw() + theme(legend.title = element_text( size=8), legend.text=element_text(size=8))
+p6 <- fviz_cluster(k6, geom = "point", data = df, ellipse=F) + ggtitle("k = 6") + theme_bw() + theme(legend.title = element_text( size=8), legend.text=element_text(size=8))
+p7 <- fviz_cluster(k7, geom = "point", data = df, ellipse=F) + ggtitle("k = 7") + theme_bw() + theme(legend.title = element_text( size=8), legend.text=element_text(size=8))
+p8 <- fviz_cluster(k8, geom = "point", data = df, ellipse=F) + ggtitle("k = 8") + theme_bw() + theme(legend.title = element_text( size=8), legend.text=element_text(size=8))
+p9 <- fviz_cluster(k9, geom = "point", data = df, ellipse=F) + ggtitle("k = 9") + theme_bw() + theme(legend.title = element_text( size=8), legend.text=element_text(size=8))
+p10 <- fviz_cluster(k10, geom = "point", data = df, ellipse=F) + ggtitle("k = 10")+ theme_bw() + theme(legend.title = element_text( size=8), legend.text=element_text(size=8))
+p11 <- fviz_cluster(k11, geom = "point", data = df, ellipse=F) + ggtitle("k = 11") + theme_bw() + theme(legend.title = element_text( size=8), legend.text=element_text(size=8))
+p12 <- fviz_cluster(k12, geom = "point", data = df, ellipse=F) + ggtitle("k = 12")+ theme_bw() + theme(legend.title = element_text( size=8), legend.text=element_text(size=8))
+grid.arrange(p5 ,p6, p7, p8, p9, p10, p11, p12, nrow=4)
+
+ka10 <- kmeans(df, 11, nstart=10)
+kb10 <- kmeans(df, 11, nstart=50)
+
+pa10 <- fviz_cluster(ka10, geom = "point", data = df, ellipse=F) + ggtitle("k = 10, nstart = 10") + theme_bw() + theme(legend.title = element_text( size=8), legend.text=element_text(size=8))
+pb10 <- fviz_cluster(kb10, geom = "point", data = df, ellipse=F) + ggtitle("k = 10, nstart = 50") + theme_bw() + theme(legend.title = element_text( size=8), legend.text=element_text(size=8))
+grid.arrange(pa10, pb10, nrow=2)
+```
+
+
+#Network Analysis
+
+```{r}
+number_of_clusters <- 11 #optimal number from data exploration
+#plot(points, use.marks=F)
+
+kc = kmeans(cbind(data_real$x,data_real$y), number_of_clusters, nstart=20)
+#add assigned cluster to the data
+data_real$cluster = factor(kc$cluster)
+
+ggplot(data=data_real, aes(x=x, y=y)) +
+  geom_point(aes(col=cluster)) + theme_bw() + coord_fixed()
+
+#amount of nests per cluster and add coordinates
+nodes <- data_real %>% group_by(cluster) %>% summarize(n=n()) %>% bind_cols(x=kc$centers[,1], y=kc$centers[,2]) %>% mutate(x=x-min(kc$centers[,1]), y=y-min(kc$centers[,2]))
+
+#network analysis, read distance file with same index as the current outputfile
+#format waspID, nest1, nest2
+data_net <- read.table("Derived data/SuccessiveNestsPerWasp.txt", header=T, sep=";")
+data_real_un <- data_real %>% unique() #get unique values
+
+#couple these
+cl_cl <- tibble(from=integer(0), to=integer(0))
+for (i in c(1:nrow(data_net))){
+  #print(i)
+  #get nest from and to
+  from_nest = as.character(data_net[i,]$Nest1)
+  to_nest = as.character(data_net[i,]$Nest2)
+  #seek corresponding cluster
+  #print(from_nest %in% as.character(data_cl$nestID))
+  from_cluster = as.integer(data_real_un[as.character(data_real_un$NestID)==as.character(from_nest),]$cluster)
+  to_cluster = data_real_un[as.character(data_real_un$NestID)==as.character(to_nest),]$cluster
+  #add them to thedata_frame of cluster to cluster
+  cl_cl = rbind(cl_cl, tibble(from=as.integer(from_cluster), to=as.integer(to_cluster)))
+  #print(nrow(cl_cl))
+    }
+    #give the links a weight (to combine multiple links later)
+cl_cl <- cbind(cl_cl, weight = rep(1,nrow(cl_cl)))
+cl_cl    
+#make networks
+net_d <- graph_from_data_frame(d=cl_cl, vertices=nodes, directed=T)
+net_ud <- graph_from_data_frame(d=cl_cl, vertices=nodes, directed=F)
+    
+#amount loops, interal + external
+all_loops = gsize(net_ud)
+all_loops_d = gsize(net_d)
+
+#simplify by removing internal loops
+net_ud <- simplify(net_ud, remove.loops=T, remove.multiple = F)
+net_d <- simplify(net_d, remove.loops=T, remove.multiple = F)
+##########################
+#amount of internal loops:
+###########################
+int_l <- 1 - gsize(net_ud)/all_loops
+
+#simplify by removing multiple loops (sum them in weight)
+net_ud_sum <- simplify(net_ud, remove.loops=T, remove.multiple= T)
+net_d_sum <- simplify(net_d, remove.loops=T, remove.multiple= T)
+
+E(net_ud_sum)$width = E(net_ud_sum)$weight
+E(net_d_sum)$width = E(net_d_sum)$weight
+  
+###################
+#density/connectance
+####################
+#self-loops not considered
+dens = edge_density(net_ud_sum, loops=F)
+#directed considered
+dens_d = edge_density(net_d_sum, loops=F)
+    
+##############
+#Reciprocity
+#############
+rp <- reciprocity(net_d_sum)
+
+    
+##############
+#Transitivity
+################
+trans_ud = transitivity(net_ud_sum, type="global")
+trans_d = transitivity(net_d_sum, type="global")
+    
+summary_stats_field$internal_loops <- c(int_l, NA)
+summary_stats_field$all_loops  <- c(all_loops, NA)
+summary_stats_field$dens_undirected  <- c(dens, NA)
+summary_stats_field$dens_directed <- c(dens_d, NA)
+summary_stats_field$reciprocity <- c(rp, NA)
+summary_stats_field$transitivity_und <- c(trans_ud, NA)
+summary_stats_field$transitivity_dir <- c(trans_d, NA)
+
+summary_stats_field
+
+write.table(summary_stats_field, "Summary_stats_field.txt", sep="\t")
+```
+
+#Visualisation of network
+
+```{r}
+#make colors for the links
+colslinksd <- character()
+for (i in E(net_d_sum)$width) {
+  if (i == 1) { colslinksd <- c(colslinksd, 'gray42')
+  } else {colslinksd <- c(colslinksd, 'black')}}
+E(net_d_sum)$color <- colslinksd
+
+cols <- setNames(colorRampPalette(c("white", "grey", "black"))
+                 (length(as.character(V(net_d_sum)$n))),
+                 sort(as.character(V(net_d_sum)$n)))
+
+
+#remove internal loops and multiple loops, wieght edges according to multiple loops
+plot(net_d_sum, rescale=F, xlim=c(0,80), ylim=c(0,35), edge.curved=0.3,
+     vertex.label=NA,
+     vertex.shape="circle",
+     vertex.size=V(net_d_sum)$n*8,#, #main="Directed",
+     vertex.color=NA,#cols[as.character(V(net_d_sum)$n)],
+     vertex.frame.color = "blue",
+    edge.color=E(net_d_sum)$color, edge.width=E(net_d_sum)$width,
+    edge.arrow.size = 0.8, edge.arrow.width=1.2, edge.lty=1
+     )
+
+```
+
+#Histogram of distance between consecutive nests
+
+For appendix of manuscript
+
+```{r}
+head(data_real_un)
+head(data_net)
+data_net_copy <- data_net
+
+data_net_copy <- data_net_copy %>% bind_cols(dist=rep(NA, nrow(data_net_copy)))
+for(line in 1:nrow(data_net_copy)){
+  #get nest numbers
+  nest1 <- data_net_copy$Nest1[line]
+  nest2 <- data_net_copy$Nest2[line]
+  #get x and y coordinates from data_real_un
+  x1 <- as.numeric(data_real_un %>% filter(NestID==nest1) %>% select(x))
+  y1 <- as.numeric(data_real_un %>% filter(NestID==nest1) %>% select(y))
+  
+  x2 <- as.numeric(data_real_un %>% filter(NestID==nest2) %>% select(x))
+  y2 <- as.numeric(data_real_un %>% filter(NestID==nest2) %>% select(y))
+  #calculate distance
+  dist12 <- sqrt((x1-x2)^2 + (y1-y2)^2)
+  
+  data_net_copy[line,]$dist <- dist12
+}
+
+p <- ggplot(data=data_net_copy, aes(x=dist)) +
+  geom_histogram(binwidth=2, boundary=0, col="lightgrey") +
+  xlab("Distance (m, grouped per 2m)") +
+  ylab("Frequency") +
+  theme(axis.text=element_text(size=12),
+      axis.title=element_text(size=12, face="bold"))+
+  theme_bw()
+p
+```
+
