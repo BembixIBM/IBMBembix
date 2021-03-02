@@ -21,12 +21,12 @@ Raw GIS data (rasters: raw data - CIR (band 1 NIR, band 3 R) DEM and derived - N
 Note: examples are given here in the output-folders (for 10 runs for each submodel). Actual data used in the manuscript is stored in the ABC-section.
 
 ## ABC
-- directory 'Field data analyses': 'Extract_data_from_fieldrecords.R' makes datafiles from the raw data (coordinates and records in folder 'Raw data') to be used to make summary statistics ; 'Make_Summary_stats_field.Rmd': calculated the summary stats (as in Summary_stats_s.R in IBM-section)
-- 'Field data analyses/Summary_stats_field.txt' is the output of the summary stats of the field data.
 - 'ABC_Bembix_prior_predictive_check.Rmd': the prior predictive check script, to delineate useful parameter space. Uses data from folder 'Data outputs'
 - 'ABC_Bembix_rev.Rmd': the actual ABC analysis with model selection.
 - 'H_modelselectionABC.R': helper script coded with the actual model selection, custom made, to be able to add weights to the summary statistics.
 - Folder 'Data outputs': the actual summary and parameters data-outputs from the prior predictive check (200,000 simulations) and the actual run (1,000,000 simulations); these are calculated with Params_get_priors_s.R and Summary_stats_s.R from IBM-section (the raw output data from the IBM is too large to be put online, examples can be found in the IBM-section).
+- directory 'Field data analyses': 'Extract_data_from_fieldrecords.R' makes datafiles from the raw data (coordinates and records in folder 'Raw data') to be used to make summary statistics ; 'Make_Summary_stats_field.Rmd': calculated the summary stats (as in Summary_stats_s.R in IBM-section)
+- 'Field data analyses/Summary_stats_field.txt' is the output of the summary stats of the field data.
 
 
 
