@@ -1,6 +1,15 @@
 # IBMBembix
 source code and data for manuscript
 
+Version of software:
+R-3.5.1
+Python-3.8.6
+
+Version of packages in R:
+spatial 7.3-11; spatstat 1.57-1; igraph 1.2.2; reshape2 1.4.3; readr 1.3.1
+abc 2.1; dplyr 1.0.2; tidyr 1.1.2; ggplot2 3.3.2; 1.0.0; gridExtra 2.3; scales 1.0.0
+INLA 18.07.12; lattice 0.20-35; rgdal 1.3-4; sp 1.3-1; fields 9.6, gstat 1.1-6; ggmap 2.6.1; reshape 0.8.7; raster 2.6-7; dismo 1.1-4; maps 3.3.0; maptools 0.9-4; mapdata 2.3.0; rgeos 0.3-28; GGally 1.4.0; MASS 7.3-50; ROCR 1.0-7; readxl 1.3.1; caret 6.0-80; imager 0.41.1
+
 ## Microhabitat model
 - 'Microhabitat Final Model with iterations - scales.R': source code for the microhabitat model with INLA, including 10 iterations for cross-validation (if uncommented), and choices of scales (default 1). Output will be put in the folder 'output_iterations', where a folder named 'scale_*scale*' should be made.
 - 'Microhabitat Final Model visualisations of iterations.R': source code for making graphs of the microhabitat model. Datafiles needed in this script are made by 'Microhabitat Final Model with iterations.R'. Example data used in the manuscript are present in the map /output_iterations/scale_1 (except for making the graph of the spatial field, for which the previous script should be run).
